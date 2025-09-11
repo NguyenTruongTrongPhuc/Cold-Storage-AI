@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}Báo cáo & Lịch sử{% endblock %}
+
+{% block content %}
+<h1 class="h2 mb-4">Báo cáo & Lịch sử</h1>
+
+<ul class="nav nav-tabs" id="reportsTab" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="explorer-tab" data-bs-toggle="tab" data-bs-target="#explorer-pane" type="button" role="tab">
+            <i class="bi bi-graph-up me-2"></i>Trình khám phá Dữ liệu
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="generator-tab" data-bs-toggle="tab" data-bs-target="#generator-pane" type="button" role="tab">
+            <i class="bi bi-file-pdf me-2"></i>Trình tạo Báo cáo
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="events-tab" data-bs-toggle="tab" data-bs-target="#events-pane" type="button" role="tab">
+            <i class="bi bi-list-stars me-2"></i>Nhật ký Sự kiện Hệ thống
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="reportsTabContent">
+    <div class="tab-pane fade" id="explorer-pane" role="tabpanel">
+        <div class="card bg-dark-subtle border-secondary border-top-0 rounded-bottom">
+            <div class="card-body">
+                <div class="row gy-3 align-items-end">
+                    <div class="col-md-5">
+                        <label class="form-label">Chọn chỉ số để hiển thị:</label>
+                        <select id="metric-selector" class="form-select bg-dark text-white" multiple>
+                            <option value="energy_kwh" selected>Năng lượng tiêu thụ (kWh)</option>
+                            <option value="health_comp-02">Điểm sức khỏe (Máy nén #2)</option>
+                            <option value="health_fan-01">Điểm sức khỏe (Quạt A1)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">Chọn khoảng thời gian:</label>
+                        <input type="text" id="explorer-date-range" class="form-control bg-dark text-white" placeholder="Chọn ngày...">
+                    </div>
+                    <div class="col-md-2">
+                        <button id="export-csv-btn" class="btn btn-outline-info w-100"><i class="bi bi-download me-2"></i>Xuất CSV</button>
+                    </div>
+                </div>
+                <div id="explorer-chart" class="mt-4"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade show active" id="generator-pane" role="tabpanel">
+        <div class="card bg-dark-subtle border-secondary border-top-0 rounded-bottom">
+            <div class="card-body p-4">
+                <div class="row">
+                    <div class="col-lg-4">
+                        <h5 class="mb-3">Tùy chọn Báo cáo</h5>
+                        <form id="report-generator-form">
+                            <div class="mb-3">
+                                <label for="report-type-selector" class="form-label">Loại báo cáo</label>
+                                <select id="report-type-selector" class="form-select bg-dark text-white">
+                                    <option value="monthly_energy">Báo cáo Năng lượng Tháng</option>
+                                    <option value="maintenance_history" disabled>Báo cáo Lịch sử Bảo trì (sắp có)</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="report-month-picker" class="form-label">Chọn tháng</label>
+                                <input type="month" id="report-month-picker" class="form-control bg-dark text-white">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100"><i class="bi bi-file-earmark-check me-2"></i>Tạo Báo cáo</button>
+                        </form>
+                    </div>
+                    <div class="col-lg-8">
+                        <h5 class="mb-3">Xem trước Báo cáo</h5>
+                        <div id="report-preview-area" class="bg-dark p-4 rounded border border-secondary" style="min-height: 500px;">
+                            <div class="text-center text-muted pt-5">
+                                <p>Vui lòng chọn các tùy chọn và nhấn "Tạo Báo cáo" để xem trước.</p>
+                                <i class="bi bi-file-earmark-text" style="font-size: 5rem;"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="events-pane" role="tabpanel">
+        <div class="card bg-dark-subtle border-secondary border-top-0 rounded-bottom">
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 500px;">
+                    <table class="table table-dark table-striped table-hover mb-0">
+                        <thead>
+                            <tr><th>Thời gian</th><th>Loại</th><th>Mức độ</th><th>Nội dung</th></tr>
+                        </thead>
+                        <tbody id="events-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style id="print-styles" media="print">
+    body * { visibility: hidden; }
+    #report-preview-area, #report-preview-area * { visibility: visible; }
+    #report-preview-area { position: absolute; left: 0; top: 0; width: 100%; }
+    .no-print { display: none; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    let historicalData = {};
+    let explorerChart;
+
+    // --- MAIN INITIALIZATION ---
+    try {
+        const response = await fetch('/api/historical-data');
+        historicalData = await response.json();
+        
+        // Initialize all three tabs
+        initializeExplorer();
+        initializeReportGenerator();
+        initializeEventsLog();
+
+    } catch (error) {
+        console.error("Failed to load historical data:", error);
+    }
+
+    // --- TAB 1: DATA EXPLORER LOGIC ---
+    function initializeExplorer() {
+        flatpickr("#explorer-date-range", {
+            mode: "range",
+            dateFormat: "d/m/Y",
+            defaultDate: [new Date().setDate(new Date().getDate() - 30), new Date()],
+            onChange: () => renderExplorerChart()
+        });
+        
+        document.getElementById('metric-selector').addEventListener('change', renderExplorerChart);
+        renderExplorerChart();
+    }
+    
+    function renderExplorerChart() {
+        const selectedMetrics = [...document.getElementById('metric-selector').selectedOptions].map(o => o.value);
+        const dateRange = document.getElementById('explorer-date-range')._flatpickr.selectedDates;
+        if (selectedMetrics.length === 0 || dateRange.length < 2) return;
+
+        const [startDate, endDate] = [dateRange[0].getTime(), dateRange[1].getTime()];
+        
+        const series = selectedMetrics.map(metricId => {
+            if (metricId === 'energy_kwh') {
+                return { name: 'Năng lượng tiêu thụ (kWh)', data: historicalData.energy_history.filter(d => d[0] >= startDate && d[0] <= endDate) };
+            }
+            if (metricId.startsWith('health_')) {
+                const deviceId = metricId.replace('health_', '');
+                const device = historicalData.equipment_list.find(d => d.id === deviceId);
+                const deviceDetails = historicalData.equipment_details[deviceId];
+                const historyKey = Object.keys(deviceDetails.history)[0];
+                return { name: `Điểm sức khỏe (${device.name})`, data: deviceDetails.history[historyKey].filter(d => d[0] >= startDate && d[0] <= endDate) };
+            }
+        }).filter(Boolean);
+
+        const options = {
+            series: series, chart: { type: 'line', height: 400, background: 'transparent' }, theme: { mode: 'dark' }, stroke: { curve: 'smooth', width: 2 }, xaxis: { type: 'datetime' }, yaxis: { title: { text: 'Giá trị' } }, legend: { position: 'top' },
+        };
+        
+        if (explorerChart) {
+            explorerChart.updateOptions(options);
+        } else {
+            explorerChart = new ApexCharts(document.querySelector("#explorer-chart"), options);
+            explorerChart.render();
+        }
+    }
+
+    // --- TAB 2: REPORT GENERATOR LOGIC (NEW) ---
+    function initializeReportGenerator() {
+        // Set default month to current month
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        document.getElementById('report-month-picker').value = `${year}-${month}`;
+        
+        document.getElementById('report-generator-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            generateMonthlyEnergyReport();
+        });
+    }
+
+    function generateMonthlyEnergyReport() {
+        const monthPicker = document.getElementById('report-month-picker');
+        if (!monthPicker.value) {
+            alert("Vui lòng chọn tháng để tạo báo cáo.");
+            return;
+        }
+
+        const [year, month] = monthPicker.value.split('-').map(Number);
+        const startDate = new Date(year, month - 1, 1).getTime();
+        const endDate = new Date(year, month, 1).getTime() - 1; // Last millisecond of the month
+
+        const energyDataForMonth = historicalData.energy_history.filter(d => d[0] >= startDate && d[0] <= endDate);
+        const anomaliesForMonth = historicalData.anomalies.filter(a => a.timestamp >= startDate && a.timestamp <= endDate);
+
+        if (energyDataForMonth.length === 0) {
+            document.getElementById('report-preview-area').innerHTML = '<div class="text-center text-muted pt-5"><p>Không có dữ liệu cho tháng đã chọn.</p></div>';
+            return;
+        }
+
+        // Calculations
+        const totalKwh = energyDataForMonth.reduce((sum, day) => sum + day[1], 0);
+        const avgKwh = totalKwh / energyDataForMonth.length;
+        const highestDay = energyDataForMonth.reduce((max, day) => day[1] > max[1] ? day : max, energyDataForMonth[0]);
+        const lowestDay = energyDataForMonth.reduce((min, day) => day[1] < min[1] ? day : min, energyDataForMonth[0]);
+        
+        // Generate Report HTML
+        const reportHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="mb-0">Báo cáo Năng lượng Tháng ${month}/${year}</h4>
+                <button class="btn btn-sm btn-outline-light no-print" onclick="window.print()"><i class="bi bi-printer me-2"></i>In/Lưu PDF</button>
+            </div>
+            <div class="row">
+                <div class="col-6"><div class="card bg-dark mb-3"><div class="card-body"><strong>Tổng tiêu thụ:</strong><p class="fs-4 mb-0">${totalKwh.toFixed(1)} kWh</p></div></div></div>
+                <div class="col-6"><div class="card bg-dark mb-3"><div class="card-body"><strong>Trung bình ngày:</strong><p class="fs-4 mb-0">${avgKwh.toFixed(1)} kWh</p></div></div></div>
+                <div class="col-6"><div class="card bg-dark mb-3"><div class="card-body"><strong>Ngày cao nhất:</strong><p class="fs-5 mb-0">${highestDay[1].toFixed(1)} kWh (${new Date(highestDay[0]).toLocaleDateString('vi-VN')})</p></div></div></div>
+                <div class="col-6"><div class="card bg-dark mb-3"><div class="card-body"><strong>Ngày thấp nhất:</strong><p class="fs-5 mb-0">${lowestDay[1].toFixed(1)} kWh (${new Date(lowestDay[0]).toLocaleDateString('vi-VN')})</p></div></div></div>
+            </div>
+            <h5 class="mt-3">Tổng kết Bất thường</h5>
+            <p>Phát hiện <strong>${anomaliesForMonth.length}</strong> sự kiện bất thường trong tháng.</p>
+            ${anomaliesForMonth.length > 0 ? `
+                <ul class="list-group list-group-flush">
+                    ${anomaliesForMonth.map(a => `<li class="list-group-item bg-dark"><strong>${new Date(a.timestamp).toLocaleDateString('vi-VN')}:</strong> ${a.reason}</li>`).join('')}
+                </ul>
+            ` : ''}
+        `;
+        
+        document.getElementById('report-preview-area').innerHTML = reportHTML;
+    }
+
+    // --- TAB 3: SYSTEM EVENT LOG LOGIC ---
+    function initializeEventsLog() {
+        const tableBody = document.getElementById('events-table-body');
+        tableBody.innerHTML = '';
+        historicalData.system_events.forEach(event => {
+            const row = tableBody.insertRow();
+            const severityMap = { "Cao": "danger", "Trung bình": "warning", "Thấp": "info" };
+            
+            row.innerHTML = `
+                <td>${new Date(event.timestamp).toLocaleString('vi-VN')}</td>
+                <td>${event.type}</td>
+                <td><span class="badge text-bg-${severityMap[event.severity] || 'secondary'}">${event.severity}</span></td>
+                <td>${event.message}</td>
+            `;
+        });
+    }
+});
+</script>
+{% endblock %}

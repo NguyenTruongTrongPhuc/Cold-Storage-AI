@@ -1,0 +1,11 @@
+.sidebar {
+    width: 280px;
+    position: fixed;
+    top: 0;
+    left: 0;
+}
+.main-content {
+    margin-left: 280px;
+    overflow-y: auto;
+    height: 100vh;
+}

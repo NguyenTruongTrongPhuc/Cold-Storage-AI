@@ -1,0 +1,10 @@
+# Môi trường ảo
+venv/
+.venv/
+
+# Thư mục cache của Python
+__pycache__/
+*.pyc
+
+# File hệ điều hành
+.DS_Store

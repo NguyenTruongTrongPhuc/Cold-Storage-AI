@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard Tổng quan{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h1 class="h2 mb-4">Dashboard Tổng quan</h1>
+    <span class="badge bg-success-subtle text-success-emphasis rounded-pill">● Live</span>
+</div>
+
+<div class="row">
+    <div class="col-xl-8 mb-4">
+        <div class="card bg-dark-subtle border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title">Sơ đồ nhiệt Kho lạnh</h5>
+                <div id="heatmap-container" class="d-flex flex-column mt-3"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4 mb-4">
+        <div class="row">
+            <div class="col-12 mb-4">
+                <div class="card bg-dark-subtle border-secondary">
+                    <div class="card-body text-center">
+                        <h6 class="text-muted">Nhiệt độ Trung bình</h6>
+                        <p class="display-4 fw-light" id="avg_temp">-20.1<span class="fs-5 text-muted">°C</span></p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 mb-4">
+                <div class="card bg-dark-subtle border-secondary">
+                    <div class="card-body text-center">
+                        <h6 class="text-muted">Độ ẩm</h6>
+                        <p class="display-4 fw-light" id="humidity">88.0<span class="fs-5 text-muted">%</span></p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12">
+                 <div class="card bg-dark-subtle border-secondary">
+                    <div class="card-header">Trạng thái Thiết bị</div>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item bg-dark-subtle d-flex justify-content-between align-items-center">Máy nén <span class="badge" id="compressor_status"></span></li>
+                        <li class="list-group-item bg-dark-subtle d-flex justify-content-between align-items-center">Công suất<span id="compressor_power_kw" class="fw-bold">0 kW</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-7 mb-4">
+        <div class="card bg-dark-subtle border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title">Dự báo Tải nhiệt (kW)</h5>
+                <div id="forecast-chart"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5 mb-4">
+        <div class="card bg-dark-subtle border-secondary h-100">
+            <div class="card-body">
+                <h5 class="card-title">Lịch trình Tối ưu Máy nén (24h)</h5>
+                <div id="schedule-chart"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // --- KHỞI TẠO BIỂU ĐỒ ---
+    const forecastChartOptions = {
+        series: [{ name: 'Lịch sử', data: [] }, { name: 'Dự báo', data: [] }],
+        chart: { type: 'line', height: 300, background: 'transparent', toolbar: { show: false }, zoom: { enabled: false } },
+        theme: { mode: 'dark' },
+        stroke: { width: [3, 3], curve: 'smooth', dashArray: [0, 5] },
+        markers: { size: 4 },
+        xaxis: { type: 'datetime', labels: { style: { colors: '#888' } } },
+        yaxis: { labels: { style: { colors: '#888' } } },
+        legend: { show: true, position: 'top', horizontalAlign: 'right' },
+        tooltip: { theme: 'dark' }
+    };
+    const forecastChart = new ApexCharts(document.querySelector("#forecast-chart"), forecastChartOptions);
+    forecastChart.render();
+
+    const scheduleChartOptions = {
+        series: [{ data: [] }],
+        chart: { type: 'rangeBar', height: 300, background: 'transparent', toolbar: { show: false } },
+        theme: { mode: 'dark' },
+        plotOptions: { bar: { horizontal: true, distributed: true, dataLabels: { hideOverflowingLabels: false } } },
+        dataLabels: { enabled: true, formatter: (val, opts) => opts.w.config.series[0].data[opts.dataPointIndex].name, style: { colors: ['#f3f4f5', '#fff'] } },
+        xaxis: { type: 'datetime', labels: { style: { colors: '#888' } } },
+        yaxis: { show: false },
+        grid: { row: { colors: ['transparent', 'transparent'], opacity: 0.5 } },
+        tooltip: { enabled: false }
+    };
+    const scheduleChart = new ApexCharts(document.querySelector("#schedule-chart"), scheduleChartOptions);
+    scheduleChart.render();
+
+    // --- KẾT NỐI WEBSOCKET VÀ CẬP NHẬT UI ---
+    const ws = new WebSocket(`ws://${window.location.host}/ws/dashboard`);
+    ws.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        
+        // Cập nhật các chỉ số chính
+        const avg_temp = (data.zone_A_temp + data.zone_B_temp) / 2;
+        document.getElementById('avg_temp').innerHTML = `${avg_temp.toFixed(1)}<span class="fs-5 text-muted">°C</span>`;
+        document.getElementById('humidity').innerHTML = `${data.humidity.toFixed(1)}<span class="fs-5 text-muted">%</span>`;
+        document.getElementById('compressor_power_kw').textContent = data.compressor_power_kw.toFixed(1) + ' kW';
+        updateStatus('compressor_status', data.compressor_status, 'ON', 'OFF');
+
+        // Cập nhật Sơ đồ nhiệt
+        updateHeatmap(data.heatmap_data);
+
+        // Cập nhật Biểu đồ
+        forecastChart.updateSeries([ { name: 'Lịch sử', data: data.load_history }, { name: 'Dự báo', data: data.load_forecast } ]);
+        
+        const scheduleSeries = data.compressor_schedule.map(item => ({
+            x: item.name,
+            y: [item.start, item.end],
+            fillColor: item.color,
+            name: item.name
+        }));
+        scheduleChart.updateSeries([{ data: scheduleSeries }]);
+    };
+    
+    // Hàm vẽ sơ đồ nhiệt
+    function updateHeatmap(data) {
+        const container = document.getElementById('heatmap-container');
+        container.innerHTML = '';
+        const minTemp = -21, maxTemp = -18;
+
+        data.forEach(rowData => {
+            const rowDiv = document.createElement('div');
+            rowDiv.className = 'd-flex';
+            rowData.forEach(temp => {
+                const cellDiv = document.createElement('div');
+                cellDiv.className = 'flex-grow-1 p-3 m-1 rounded';
+                cellDiv.style.backgroundColor = getTempColor(temp, minTemp, maxTemp);
+                rowDiv.appendChild(cellDiv);
+            });
+            container.appendChild(rowDiv);
+        });
+    }
+
+    function getTempColor(temp, min, max) {
+        const ratio = Math.max(0, Math.min(1, (temp - min) / (max - min)));
+        const red = Math.round(255 * ratio);
+        const blue = Math.round(255 * (1 - ratio));
+        return `rgb(${red}, 80, ${blue})`;
+    }
+    
+    // Hàm cập nhật trạng thái
+    function updateStatus(elementId, value, warnValue, goodValue) {
+        const el = document.getElementById(elementId);
+        el.textContent = value;
+        el.className = 'badge ';
+        if (value === 'ON') {
+            el.classList.add('bg-danger');
+        } else if (value === 'OFF') {
+            el.classList.add('bg-success');
+        }
+    }
+</script>
+{% endblock %}

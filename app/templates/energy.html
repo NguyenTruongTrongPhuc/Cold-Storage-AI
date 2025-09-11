@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block title %}Phân tích Năng lượng{% endblock %}
+
+{% block content %}
+<h1 class="h2 mb-4">Phân tích Bất thường về Hiệu suất Năng lượng</h1>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card bg-dark-subtle border-secondary h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Số Lần Bất Thường</h6>
+                <p class="display-5 fw-bold text-warning mb-0" id="kpi-anomaly-count">0</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-dark-subtle border-secondary h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Năng Lượng Lãng Phí (Ước tính)</h6>
+                <p class="display-5 fw-bold text-danger mb-0" id="kpi-wasted-energy">0 <span class="fs-4">kWh</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-dark-subtle border-secondary h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Nguyên Nhân Phổ Biến</h6>
+                <p class="fs-5 fw-bold text-info mb-0 pt-2" id="kpi-common-cause">-</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card bg-dark-subtle border-secondary">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
+        Lịch sử Tiêu thụ Năng lượng
+        <div class="d-flex align-items-center mt-2 mt-md-0">
+             <input type="text" id="date-range-picker" class="form-control form-control-sm bg-dark text-white border-secondary me-2" placeholder="Chọn khoảng ngày...">
+            <div class="btn-group" role="group">
+                <input type="radio" class="btn-check" name="time-filter" id="filter7days" autocomplete="off">
+                <label class="btn btn-sm btn-outline-secondary" for="filter7days">7 ngày</label>
+                <input type="radio" class="btn-check" name="time-filter" id="filter30days" autocomplete="off" checked>
+                <label class="btn btn-sm btn-outline-secondary" for="filter30days">30 ngày</label>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="energy-chart"></div>
+    </div>
+</div>
+
+<div class="card bg-dark-subtle border-secondary mt-4" id="rca-card" style="display: none;">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-robot me-2"></i>Phân tích Nguyên nhân Gốc rễ từ AI</h5>
+        <button type="button" class="btn-close" id="close-rca"></button>
+    </div>
+    <div class="card-body">
+        <p id="rca-text"></p>
+    </div>
+</div>
+
+<div class="card bg-dark-subtle border-secondary mt-4">
+    <div class="card-header">
+        <i class="bi bi-list-check me-2"></i>Danh sách Chi tiết các Sự kiện Bất thường
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th scope="col">Ngày</th>
+                        <th scope="col">Tiêu thụ (kWh)</th>
+                        <th scope="col">Dự kiến (kWh)</th>
+                        <th scope="col">Phân tích từ AI</th>
+                    </tr>
+                </thead>
+                <tbody id="anomalies-table-body">
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    let energyChart;
+    let fullEnergyData = {};
+
+    // --- UI UPDATE FUNCTIONS ---
+
+    function updateKPIs(anomalies, history, baseline) {
+        const anomalyCount = anomalies.length;
+        document.getElementById('kpi-anomaly-count').textContent = anomalyCount;
+
+        let wastedEnergy = 0;
+        anomalies.forEach(anomaly => {
+            const historyPoint = history.find(h => h[0] === anomaly.timestamp);
+            const baselinePoint = baseline.find(b => b.x === anomaly.timestamp);
+            if (historyPoint && baselinePoint) {
+                const actual = historyPoint[1];
+                const maxExpected = baselinePoint.y[1];
+                if (actual > maxExpected) {
+                    wastedEnergy += (actual - maxExpected);
+                }
+            }
+        });
+        document.getElementById('kpi-wasted-energy').innerHTML = `${wastedEnergy.toFixed(0)} <span class="fs-4">kWh</span>`;
+
+        if (anomalyCount > 0) {
+            const reasonCounts = anomalies.reduce((acc, anomaly) => {
+                acc[anomaly.reason] = (acc[anomaly.reason] || 0) + 1;
+                return acc;
+            }, {});
+            const commonCause = Object.keys(reasonCounts).reduce((a, b) => reasonCounts[a] > reasonCounts[b] ? a : b);
+            document.getElementById('kpi-common-cause').textContent = commonCause;
+        } else {
+            document.getElementById('kpi-common-cause').textContent = 'Không có bất thường';
+        }
+    }
+
+    function updateAnomaliesTable(anomalies, history, baseline) {
+        const tableBody = document.getElementById('anomalies-table-body');
+        tableBody.innerHTML = '';
+        if (anomalies.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Không tìm thấy sự kiện bất thường nào.</td></tr>';
+            return;
+        }
+        anomalies.forEach(anomaly => {
+            const historyPoint = history.find(h => h[0] === anomaly.timestamp);
+            const baselinePoint = baseline.find(b => b.x === anomaly.timestamp);
+            const date = new Date(anomaly.timestamp).toLocaleDateString('vi-VN');
+            const actual = historyPoint ? historyPoint[1].toFixed(1) : 'N/A';
+            const expected = baselinePoint ? `${baselinePoint.y[0].toFixed(1)} - ${baselinePoint.y[1].toFixed(1)}` : 'N/A';
+
+            const row = document.createElement('tr');
+            row.style.cursor = 'pointer';
+            row.innerHTML = `
+                <td>${date}</td>
+                <td><span class="fw-bold text-danger">${actual}</span></td>
+                <td>${expected}</td>
+                <td>${anomaly.reason}</td>
+            `;
+            row.addEventListener('click', () => {
+                showRcaCard(anomaly.reason);
+                const dataPointIndex = history.findIndex(h => h[0] === anomaly.timestamp);
+                if (energyChart && dataPointIndex !== -1) {
+                    energyChart.toggleDataPointSelection(0, dataPointIndex);
+                }
+            });
+            tableBody.appendChild(row);
+        });
+    }
+
+    function updateChart(seriesData, anomalies) {
+        const options = {
+            series: seriesData, chart: { type: 'line', height: 350, background: 'transparent', toolbar: { show: false }, zoom: { enabled: false }, events: { markerClick: (event, chartContext, { seriesIndex, dataPointIndex }) => { if (seriesIndex === 0) { const clickedTimestamp = seriesData[0].data[dataPointIndex].x; const anomaly = anomalies.find(a => a.timestamp === clickedTimestamp); if (anomaly) showRcaCard(anomaly.reason); } } } }, theme: { mode: 'dark' }, stroke: { width: [3, 0], curve: 'smooth' }, fill: { type: 'solid', opacity: 0.15, }, markers: { size: 0 }, xaxis: { type: 'datetime', labels: { style: { colors: '#888' }, datetimeUTC: false }, tooltip: { enabled: false } }, yaxis: { title: { text: 'Năng lượng (kWh)', style: { color: '#888' } }, labels: { style: { colors: '#888' } } }, legend: { show: true, position: 'top', horizontalAlign: 'right', labels: { colors: '#fff' } }, tooltip: { theme: 'dark', x: { format: 'dd/MM/yyyy' } }, colors: ['#00E396', '#008FFB'],
+        };
+        if (energyChart) {
+            energyChart.updateOptions(options);
+        } else {
+            energyChart = new ApexCharts(document.querySelector("#energy-chart"), options);
+            energyChart.render();
+        }
+    }
+    
+    function showRcaCard(reason) {
+        document.getElementById('rca-text').textContent = reason;
+        document.getElementById('rca-card').style.display = 'block';
+    }
+
+    // --- MAIN DATA PROCESSING FUNCTION ---
+
+    function processAndRenderData(startDate, endDate) {
+        const history = fullEnergyData.energy_daily_history.filter(item => item[0] >= startDate && item[0] <= endDate);
+        const anomalies = fullEnergyData.anomalies.filter(item => item.timestamp >= startDate && item.timestamp <= endDate);
+        
+        const startIndex = fullEnergyData.energy_daily_history.findIndex(item => item[0] >= startDate);
+        const baselineRange = (startIndex !== -1) ? fullEnergyData.energy_baseline_range.slice(startIndex, startIndex + history.length) : [];
+        
+        const baselineDataForUI = history.map((h, i) => ({ x: h[0], y: baselineRange[i] || [0,0] }));
+        
+        updateKPIs(anomalies, history, baselineDataForUI);
+
+        const seriesData = [
+            { name: 'Tiêu thụ thực tế', type: 'line', data: history.map(([timestamp, value]) => ({ x: timestamp, y: value, markers: { size: anomalies.some(a => a.timestamp === timestamp) ? 6 : 0, fillColor: '#FF4560', strokeColor: '#fff', radius: 2 } })) },
+            { name: 'Vùng vận hành an toàn', type: 'rangeArea', data: baselineDataForUI }
+        ];
+        updateChart(seriesData, anomalies);
+        updateAnomaliesTable(anomalies, history, baselineDataForUI);
+    }
+
+    // --- INITIALIZATION AND EVENT LISTENERS ---
+
+    async function initialize() {
+        try {
+            const response = await fetch('/api/energy-history');
+            fullEnergyData = await response.json();
+            
+            const datePicker = flatpickr("#date-range-picker", {
+                mode: "range",
+                dateFormat: "d/m/Y",
+                onClose: function(selectedDates) {
+                    if (selectedDates.length === 2) {
+                        document.querySelectorAll('input[name="time-filter"]').forEach(radio => radio.checked = false);
+                        processAndRenderData(selectedDates[0].getTime(), selectedDates[1].getTime());
+                    }
+                }
+            });
+
+            document.getElementById('filter7days').addEventListener('change', () => {
+                datePicker.clear();
+                const endDate = new Date();
+                const startDate = new Date();
+                startDate.setDate(endDate.getDate() - 7);
+                processAndRenderData(startDate.getTime(), endDate.getTime());
+            });
+
+            document.getElementById('filter30days').addEventListener('change', () => {
+                datePicker.clear();
+                const endDate = new Date();
+                const startDate = new Date();
+                startDate.setDate(endDate.getDate() - 30);
+                processAndRenderData(startDate.getTime(), endDate.getTime());
+            });
+
+            document.getElementById('close-rca').addEventListener('click', () => {
+                document.getElementById('rca-card').style.display = 'none';
+            });
+
+            // Directly load the default 30-day view
+            const defaultEndDate = new Date();
+            const defaultStartDate = new Date();
+            defaultStartDate.setDate(defaultEndDate.getDate() - 30);
+            processAndRenderData(defaultStartDate.getTime(), defaultEndDate.getTime());
+
+        } catch (error) {
+            console.error("Initialization failed:", error);
+        }
+    }
+
+    initialize();
+});
+</script>
+{% endblock %}
