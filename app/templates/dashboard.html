@@ -8,6 +8,9 @@
     <span class="badge bg-success-subtle text-success-emphasis rounded-pill">● Live</span>
 </div>
 
+<div id="ai-agent-widget-container" class="mb-4">
+    </div>
+
 <div class="row">
     <div class="col-xl-8 mb-4">
         <div class="card bg-dark-subtle border-secondary h-100">
@@ -70,16 +73,95 @@
 
 {% block scripts %}
 <script>
-    // --- KHỞI TẠO BIỂU ĐỒ ---
+    // --- KHU VỰC CODE CỦA AI AGENT ---
+    const aiWidgetContainer = document.getElementById('ai-agent-widget-container');
+
+    async function fetchAiRecommendations() {
+        try {
+            const response = await fetch('/api/ai-agent/recommendations');
+            const recommendations = await response.json();
+            
+            if (recommendations.length > 0 && aiWidgetContainer.innerHTML.trim() === '') {
+                renderRecommendationCard(recommendations[0]);
+            } else if (recommendations.length === 0) {
+                aiWidgetContainer.innerHTML = '';
+            }
+        } catch (error) {
+            console.error("Lỗi khi lấy khuyến nghị từ AI Agent:", error);
+        }
+    }
+
+    function renderRecommendationCard(rec) {
+        const cardHTML = `
+            <div class="card border-info bg-info-subtle text-info-emphasis" id="rec-${rec.id}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-robot me-2"></i> ${rec.title}</h5>
+                    <small>Đề xuất từ AI Agent</small>
+                </div>
+                <div class="card-body">
+                    <p class="card-text"><strong>Lý do:</strong> ${rec.reason}</p>
+                    <p class="fw-bold"><strong>Hành động đề xuất:</strong> ${rec.action_suggestion}</p>
+                </div>
+                <div class="card-footer text-end bg-transparent border-info">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="dismissRecommendation('${rec.id}')">Bỏ qua</button>
+                    <button class="btn btn-sm btn-info" onclick="acceptRecommendation('${rec.id}')">Chấp nhận</button>
+                </div>
+            </div>
+        `;
+        aiWidgetContainer.innerHTML = cardHTML;
+    }
+
+    async function acceptRecommendation(recId) {
+        await fetch(`/api/ai-agent/recommendations/${recId}/act`, { method: 'POST' });
+        const card = document.getElementById(`rec-${recId}`);
+        if(card) card.remove();
+        console.log(`Đã chấp nhận khuyến nghị: ${recId}`);
+    }
+
+    async function dismissRecommendation(recId) {
+        await fetch(`/api/ai-agent/recommendations/${recId}/dismiss`, { method: 'POST' });
+        const card = document.getElementById(`rec-${recId}`);
+        if(card) card.remove();
+        console.log(`Đã bỏ qua khuyến nghị: ${recId}`);
+    }
+
+    setInterval(fetchAiRecommendations, 10000);
+    fetchAiRecommendations();
+
+    // --- KHU VỰC CODE BIỂU ĐỒ & WEBSOCKET ---
     const forecastChartOptions = {
         series: [{ name: 'Lịch sử', data: [] }, { name: 'Dự báo', data: [] }],
-        chart: { type: 'line', height: 300, background: 'transparent', toolbar: { show: false }, zoom: { enabled: false } },
+        chart: {
+            type: 'line',
+            height: 300,
+            background: 'transparent',
+            toolbar: {
+                show: true,
+                tools: {
+                    download: false,
+                    selection: true,
+                    zoom: true,
+                    zoomin: true,
+                    zoomout: true,
+                    pan: true,
+                    reset: true
+                }
+            },
+            zoom: {
+                enabled: true,
+                type: 'x'
+            }
+        },
         theme: { mode: 'dark' },
         stroke: { width: [3, 3], curve: 'smooth', dashArray: [0, 5] },
-        markers: { size: 4 },
+        markers: { size: 0, hover: { size: 5 } },
         xaxis: { type: 'datetime', labels: { style: { colors: '#888' } } },
         yaxis: { labels: { style: { colors: '#888' } } },
-        legend: { show: true, position: 'top', horizontalAlign: 'right' },
+        legend: {
+            show: true,
+            position: 'top',
+            horizontalAlign: 'left'
+        },
         tooltip: { theme: 'dark' }
     };
     const forecastChart = new ApexCharts(document.querySelector("#forecast-chart"), forecastChartOptions);
@@ -99,22 +181,24 @@
     const scheduleChart = new ApexCharts(document.querySelector("#schedule-chart"), scheduleChartOptions);
     scheduleChart.render();
 
-    // --- KẾT NỐI WEBSOCKET VÀ CẬP NHẬT UI ---
     const ws = new WebSocket(`ws://${window.location.host}/ws/dashboard`);
     ws.onmessage = function(event) {
         const data = JSON.parse(event.data);
         
-        // Cập nhật các chỉ số chính
-        const avg_temp = (data.zone_A_temp + data.zone_B_temp) / 2;
+        let minX, maxX;
+        if (forecastChart.w.globals.zoomed) {
+            minX = forecastChart.w.globals.minX;
+            maxX = forecastChart.w.globals.maxX;
+        }
+
+        const avg_temp = data.avg_temp;
         document.getElementById('avg_temp').innerHTML = `${avg_temp.toFixed(1)}<span class="fs-5 text-muted">°C</span>`;
         document.getElementById('humidity').innerHTML = `${data.humidity.toFixed(1)}<span class="fs-5 text-muted">%</span>`;
         document.getElementById('compressor_power_kw').textContent = data.compressor_power_kw.toFixed(1) + ' kW';
         updateStatus('compressor_status', data.compressor_status, 'ON', 'OFF');
 
-        // Cập nhật Sơ đồ nhiệt
         updateHeatmap(data.heatmap_data);
 
-        // Cập nhật Biểu đồ
         forecastChart.updateSeries([ { name: 'Lịch sử', data: data.load_history }, { name: 'Dự báo', data: data.load_forecast } ]);
         
         const scheduleSeries = data.compressor_schedule.map(item => ({
@@ -124,9 +208,12 @@
             name: item.name
         }));
         scheduleChart.updateSeries([{ data: scheduleSeries }]);
+
+        if (minX && maxX) {
+            forecastChart.zoomX(minX, maxX);
+        }
     };
     
-    // Hàm vẽ sơ đồ nhiệt
     function updateHeatmap(data) {
         const container = document.getElementById('heatmap-container');
         container.innerHTML = '';
@@ -152,7 +239,6 @@
         return `rgb(${red}, 80, ${blue})`;
     }
     
-    // Hàm cập nhật trạng thái
     function updateStatus(elementId, value, warnValue, goodValue) {
         const el = document.getElementById(elementId);
         el.textContent = value;

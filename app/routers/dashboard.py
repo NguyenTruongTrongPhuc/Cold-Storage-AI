@@ -40,5 +40,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def broadcast_dashboard_data():
     while True:
-        await manager.broadcast_data(storage.to_dict())
+        # Sửa tên hàm ở đây để khớp với file simulation.py mới
+        await manager.broadcast_data(storage.to_dict_for_websocket())
         await asyncio.sleep(2)
