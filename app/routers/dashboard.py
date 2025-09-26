@@ -43,3 +43,14 @@ async def broadcast_dashboard_data():
         # Sửa tên hàm ở đây để khớp với file simulation.py mới
         await manager.broadcast_data(storage.to_dict_for_websocket())
         await asyncio.sleep(2)
+
+@router.get("/api/heat-load-chart", tags=["Charts"])
+async def get_heat_load_data():
+    """
+    Endpoint này chỉ cung cấp dữ liệu lịch sử và dự báo tải nhiệt
+    để phục vụ riêng cho biểu đồ Heat Load Prediction.
+    """
+    return {
+        "load_history": storage.load_history,
+        "load_forecast": storage._get_simple_forecast() # Gọi hàm nội bộ để lấy dự báo
+    }
