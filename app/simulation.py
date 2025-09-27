@@ -110,6 +110,7 @@ class ColdStorage:
                 "door_status": self.door_status,
                 "door_open_duration_s": self.door_open_duration_s,
                 "defrost_status": self.defrost_status,
+                "compressor_schedule": self._get_compressor_schedule()
             },
             "kpis": {
                 "energy_efficiency": round(48.0 / self.compressor_power_kw if self.compressor_power_kw > 1 else 0, 2),
